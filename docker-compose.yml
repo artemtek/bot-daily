@@ -1,0 +1,7 @@
+services:
+  bot-daily:
+    build: .
+    env_file: .env
+    volumes:
+      - ./data:/data
+    restart: unless-stopped

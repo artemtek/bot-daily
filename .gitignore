@@ -1,0 +1,7 @@
+.env
+creds.txt
+subscribers.json
+data/
+bot-daily
+*.pem
+*.key
