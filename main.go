@@ -35,7 +35,7 @@ func main() {
 
 	_, err = c.AddFunc(cfg.Schedule, func() {
 		slog.Info("daily cron triggered")
-		runScheduled(ctx, bot, 1, false)
+		runScheduledDaily(ctx, bot)
 	})
 	if err != nil {
 		slog.Error("invalid daily schedule", "schedule", cfg.Schedule, "error", err)
@@ -43,8 +43,8 @@ func main() {
 	}
 
 	_, err = c.AddFunc(cfg.MonthlySchedule, func() {
-		slog.Info("monthly cron triggered")
-		runScheduled(ctx, bot, 30, true)
+		slog.Info("monthly PSR cron triggered")
+		runScheduledPSR(ctx, bot)
 	})
 	if err != nil {
 		slog.Error("invalid monthly schedule", "schedule", cfg.MonthlySchedule, "error", err)
@@ -56,7 +56,7 @@ func main() {
 
 	if cfg.RunOnStart {
 		slog.Info("running daily pipeline on startup")
-		go runScheduled(ctx, bot, 1, false)
+		go runScheduledDaily(ctx, bot)
 	}
 
 	go func() {
@@ -75,12 +75,22 @@ func main() {
 	}
 }
 
-func runScheduled(ctx context.Context, bot *Bot, days int, monthly bool) {
-	subs := bot.store.ListAll()
-	slog.Info("running scheduled pipeline", "subscribers", len(subs), "days", days, "monthly", monthly)
+func runScheduledDaily(ctx context.Context, bot *Bot) {
+	subs := bot.store.ListSubscribed()
+	slog.Info("running daily pipeline", "subscribers", len(subs))
 
-	for slackUserID, sub := range subs {
-		slog.Info("processing subscriber", "user", slackUserID, "github", sub.GitHubUsername)
-		bot.runPipeline(ctx, slackUserID, sub.GitHubUsername, days, monthly)
+	for slackUserID, user := range subs {
+		slog.Info("processing daily subscriber", "user", slackUserID, "github", user.GitHubUsername)
+		bot.runPipeline(ctx, slackUserID, user.GitHubUsername, 1, false)
+	}
+}
+
+func runScheduledPSR(ctx context.Context, bot *Bot) {
+	subs := bot.store.ListPSRSubscribed()
+	slog.Info("running PSR pipeline", "subscribers", len(subs))
+
+	for slackUserID, user := range subs {
+		slog.Info("processing PSR subscriber", "user", slackUserID, "github", user.GitHubUsername)
+		bot.runPipeline(ctx, slackUserID, user.GitHubUsername, 30, true)
 	}
 }

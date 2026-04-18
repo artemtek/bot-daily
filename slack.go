@@ -42,84 +42,177 @@ func (b *Bot) handleEvents(ctx context.Context) {
 		switch evt.Type {
 		case socketmode.EventTypeSlashCommand:
 			cmd, _ := evt.Data.(slack.SlashCommand)
-			b.handleSlashCommand(ctx, evt, cmd)
+			switch cmd.Command {
+			case "/daily":
+				b.handleDaily(ctx, evt, cmd)
+			case "/psr":
+				b.handlePSR(ctx, evt, cmd)
+			case "/subscribe":
+				b.handleSubscribe(ctx, evt, cmd)
+			}
 		}
 	}
 }
 
-func (b *Bot) handleSlashCommand(ctx context.Context, evt socketmode.Event, cmd slack.SlashCommand) {
+func (b *Bot) handleDaily(ctx context.Context, evt socketmode.Event, cmd slack.SlashCommand) {
 	args := strings.TrimSpace(cmd.Text)
 	parts := strings.Fields(args)
 
-	slog.Info("command received", "user", cmd.UserID, "args", args)
+	slog.Info("daily command", "user", cmd.UserID, "args", args)
+
+	if args == "help" {
+		b.handleHelp(evt)
+		return
+	}
+
+	user, known := b.store.Get(cmd.UserID)
+
+	// single word that's not a number — treat as github username
+	if len(parts) == 1 {
+		if _, err := strconv.Atoi(parts[0]); err != nil {
+			if err := b.store.SetGitHub(cmd.UserID, parts[0]); err != nil {
+				b.ack(evt, "Failed to save. Try again.")
+				return
+			}
+			slog.Info("github username set", "user", cmd.UserID, "github", parts[0])
+			b.ack(evt, fmt.Sprintf("GitHub username set to *%s*. Generating today's report...", parts[0]))
+			go b.runPipelineFor(ctx, cmd.UserID, 1, false)
+			return
+		}
+	}
+
+	if !known || user.GitHubUsername == "" {
+		b.ack(evt, "I don't know your GitHub username yet. Use `/daily <github-username>` to set it.")
+		return
+	}
+
+	// parse days
+	days := 1
+	if len(parts) == 1 {
+		if n, err := strconv.Atoi(parts[0]); err == nil && n > 0 && n <= 30 {
+			days = n
+		}
+	}
+
+	b.ack(evt, fmt.Sprintf("Generating summary for the last %d day(s)...", days))
+	go b.runPipelineFor(ctx, cmd.UserID, days, false)
+}
+
+func (b *Bot) handlePSR(ctx context.Context, evt socketmode.Event, cmd slack.SlashCommand) {
+	slog.Info("psr command", "user", cmd.UserID)
+
+	user, known := b.store.Get(cmd.UserID)
+	if !known || user.GitHubUsername == "" {
+		b.ack(evt, "I don't know your GitHub username yet. Use `/daily <github-username>` to set it.")
+		return
+	}
+
+	b.ack(evt, "Generating PSR (monthly status report)...")
+	go b.runPipelineFor(ctx, cmd.UserID, 30, true)
+}
+
+func (b *Bot) handleSubscribe(ctx context.Context, evt socketmode.Event, cmd slack.SlashCommand) {
+	args := strings.TrimSpace(cmd.Text)
+
+	slog.Info("subscribe command", "user", cmd.UserID, "args", args)
+
+	user, known := b.store.Get(cmd.UserID)
+	if (!known || user.GitHubUsername == "") && args != "status" && !strings.HasPrefix(args, "github ") {
+		b.ack(evt, "I don't know your GitHub username yet. Use `/daily <github-username>` first.")
+		return
+	}
+
+	parts := strings.Fields(args)
 
 	switch {
-	case len(parts) >= 2 && parts[0] == "subscribe":
-		b.handleSubscribe(evt, cmd.UserID, parts[1])
+	case len(parts) == 2 && parts[0] == "github":
+		if err := b.store.SetGitHub(cmd.UserID, parts[1]); err != nil {
+			b.ack(evt, "Failed to save. Try again.")
+			return
+		}
+		b.ack(evt, fmt.Sprintf("GitHub username updated to *%s*.", parts[1]))
 
-	case args == "unsubscribe":
-		b.handleUnsubscribe(evt, cmd.UserID)
+	case args == "daily":
+		if err := b.store.Subscribe(cmd.UserID); err != nil {
+			b.ack(evt, "Failed to subscribe. Try again.")
+			return
+		}
+		b.ack(evt, "Subscribed to daily updates!")
+
+	case args == "psr":
+		if err := b.store.PSRSubscribe(cmd.UserID); err != nil {
+			b.ack(evt, "Failed to subscribe. Try again.")
+			return
+		}
+		b.ack(evt, "Subscribed to monthly PSR reports!")
+
+	case args == "stop daily":
+		if err := b.store.Unsubscribe(cmd.UserID); err != nil {
+			b.ack(evt, "Failed to unsubscribe. Try again.")
+			return
+		}
+		b.ack(evt, "Unsubscribed from daily updates.")
+
+	case args == "stop psr":
+		if err := b.store.PSRUnsubscribe(cmd.UserID); err != nil {
+			b.ack(evt, "Failed to unsubscribe. Try again.")
+			return
+		}
+		b.ack(evt, "Unsubscribed from monthly PSR reports.")
 
 	case args == "status":
 		b.handleStatus(evt, cmd.UserID)
 
-	case args == "monthly":
-		b.ack(evt, "Generating monthly report...")
-		go b.runReport(ctx, cmd.UserID, 30, true)
-
 	default:
-		days := 1
-		if len(parts) == 1 {
-			if n, err := strconv.Atoi(parts[0]); err == nil && n > 0 && n <= 30 {
-				days = n
-			}
-		}
-		b.ack(evt, fmt.Sprintf("Generating summary for the last %d day(s)...", days))
-		go b.runReport(ctx, cmd.UserID, days, false)
+		b.ack(evt, strings.Join([]string{
+			"`/subscribe daily` — get daily scheduled updates",
+			"`/subscribe psr` — get monthly PSR reports",
+			"`/subscribe stop daily` — stop daily updates",
+			"`/subscribe stop psr` — stop monthly PSR",
+			"`/subscribe github <username>` — change your GitHub username",
+			"`/subscribe status` — check your settings",
+		}, "\n"))
 	}
-}
-
-func (b *Bot) handleSubscribe(evt socketmode.Event, slackUserID, ghUsername string) {
-	if err := b.store.Add(slackUserID, ghUsername); err != nil {
-		slog.Error("subscribe failed", "user", slackUserID, "error", err)
-		b.ack(evt, "Failed to subscribe. Try again.")
-		return
-	}
-
-	slog.Info("user subscribed", "user", slackUserID, "github", ghUsername)
-	b.ack(evt, fmt.Sprintf("Subscribed! GitHub user: %s. You'll receive daily updates.", ghUsername))
-}
-
-func (b *Bot) handleUnsubscribe(evt socketmode.Event, slackUserID string) {
-	if err := b.store.Remove(slackUserID); err != nil {
-		slog.Error("unsubscribe failed", "user", slackUserID, "error", err)
-		b.ack(evt, "Failed to unsubscribe. Try again.")
-		return
-	}
-
-	slog.Info("user unsubscribed", "user", slackUserID)
-	b.ack(evt, "Unsubscribed. You won't receive daily updates anymore.")
 }
 
 func (b *Bot) handleStatus(evt socketmode.Event, slackUserID string) {
-	sub, ok := b.store.Get(slackUserID)
-	if !ok {
-		b.ack(evt, "You're not subscribed. Use `/daily subscribe <github-username>` to start.")
+	user, ok := b.store.Get(slackUserID)
+	if !ok || user.GitHubUsername == "" {
+		b.ack(evt, "You haven't set up yet. Use `/daily <github-username>` to get started.")
 		return
 	}
 
-	b.ack(evt, fmt.Sprintf("Subscribed since %s. GitHub user: %s",
-		sub.SubscribedAt.Format("Jan 2, 2006"), sub.GitHubUsername))
+	daily := "not subscribed"
+	if user.Subscribed && user.SubscribedAt != nil {
+		daily = fmt.Sprintf("subscribed since %s", user.SubscribedAt.Format("Jan 2, 2006"))
+	}
+
+	psr := "not subscribed"
+	if user.PSRSubscribed && user.PSRSubscribedAt != nil {
+		psr = fmt.Sprintf("subscribed since %s", user.PSRSubscribedAt.Format("Jan 2, 2006"))
+	}
+
+	b.ack(evt, fmt.Sprintf("GitHub: *%s*\nDaily: %s\nPSR: %s", user.GitHubUsername, daily, psr))
 }
 
-func (b *Bot) runReport(ctx context.Context, slackUserID string, days int, monthly bool) {
-	sub, ok := b.store.Get(slackUserID)
-	if !ok {
-		b.sendDM(slackUserID, "You're not subscribed. Use `/daily subscribe <github-username>` first.")
-		return
-	}
+func (b *Bot) handleHelp(evt socketmode.Event) {
+	b.ack(evt, strings.Join([]string{
+		"`/daily` — summary for today",
+		"`/daily <N>` — summary for the last N days (max 30)",
+		"`/daily <github-username>` — set your GitHub username",
+		"`/psr` — generate monthly Project Status Report",
+		"`/subscribe daily` — get daily updates automatically",
+		"`/subscribe psr` — get monthly PSR automatically",
+		"`/subscribe stop daily` — stop daily updates",
+		"`/subscribe stop psr` — stop monthly PSR",
+		"`/subscribe status` — check your settings",
+		"`/daily help` — show this message",
+	}, "\n"))
+}
 
-	b.runPipeline(ctx, slackUserID, sub.GitHubUsername, days, monthly)
+func (b *Bot) runPipelineFor(ctx context.Context, slackUserID string, days int, monthly bool) {
+	user, _ := b.store.Get(slackUserID)
+	b.runPipeline(ctx, slackUserID, user.GitHubUsername, days, monthly)
 }
 
 func (b *Bot) runPipeline(ctx context.Context, slackUserID, ghUsername string, days int, monthly bool) {
@@ -132,7 +225,7 @@ func (b *Bot) runPipeline(ctx context.Context, slackUserID, ghUsername string, d
 
 	var summary string
 	if monthly {
-		summary, err = summarizeMonthly(ctx, b.cfg, history)
+		summary, err = summarizePSR(ctx, b.cfg, history)
 	} else {
 		summary, err = summarizeDaily(ctx, b.cfg, history)
 	}

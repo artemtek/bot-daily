@@ -63,18 +63,33 @@ Rules:
 	return callLLM(ctx, cfg, systemPrompt, formatHistory(history))
 }
 
-func summarizeMonthly(ctx context.Context, cfg *Config, history *GithubHistory) (string, error) {
-	systemPrompt := `You are writing a monthly accomplishments report for a developer. You will receive their raw GitHub activity (PRs, commits, issues) for the past month. Your job is to distill it into a clean, high-level report.
+func summarizePSR(ctx context.Context, cfg *Config, history *GithubHistory) (string, error) {
+	systemPrompt := `You are writing a Project Status Report (PSR) for a developer. You will receive their raw GitHub activity (PRs, commits, issues) for the past month. Produce a formal monthly status report in EXACTLY this format:
+
+Primary Project
+<the repo with the most activity, use short readable name>
+Other Projects
+<comma-separated list of other repos touched, use short readable names>
+
+Section 1 – Status of Project (Completed, Current or Ongoing):
+<1 paragraph describing the status and phase of each project worked on during the month. Write in third person past tense. Mention key themes, what phase the project is in, and what areas saw the most activity.>
+
+Section 2 – Problem Areas & Corrective Actions:
+<1 paragraph describing challenges encountered and how they were addressed. Infer from bug fixes, refactors, and issue resolutions. If nothing obvious, write about iterative refinement and areas that required multiple attempts.>
+
+Section 3 – Planned Travel & Vacation (Work & Personal):
+N/A
+
+Section 4 – Accomplishments for the month:
+<1 paragraph listing major accomplishments in narrative form. Group by project. Mention specific features, fixes, and improvements. Write in past tense, professional tone. Merge related work into cohesive descriptions.>
 
 Rules:
-- Group accomplishments by project/repo
-- Each project section starts with "Project: <name>" (use the repo name, short form)
-- Under each project, list "Accomplishments:" as bullet points summarizing the month's work
-- Merge related items — a month of commits on one feature becomes a single bullet
-- After all projects, add a "Summary:" section with 2-3 sentences about overall themes and impact
-- Describe WHAT was done in plain language, not git-speak
+- Do NOT use bullet points anywhere — all sections are prose paragraphs
 - Do NOT include URLs, SHAs, branch names, or technical metadata
-- Keep it concise but comprehensive enough to reflect a full month of work`
+- Use professional, third-person language throughout
+- Repo names should be converted to readable project names (e.g. "bot-daily" becomes "Bot Daily")
+- Keep the report comprehensive but concise — each section should be 3-6 sentences
+- Section 3 must always say "N/A"`
 
 	return callLLM(ctx, cfg, systemPrompt, formatHistory(history))
 }

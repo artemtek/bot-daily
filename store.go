@@ -9,15 +9,18 @@ import (
 	"time"
 )
 
-type Subscriber struct {
-	GitHubUsername string    `json:"github_username"`
-	SubscribedAt  time.Time `json:"subscribed_at"`
+type User struct {
+	GitHubUsername  string     `json:"github_username"`
+	Subscribed     bool       `json:"subscribed"`
+	SubscribedAt   *time.Time `json:"subscribed_at,omitempty"`
+	PSRSubscribed  bool       `json:"psr_subscribed"`
+	PSRSubscribedAt *time.Time `json:"psr_subscribed_at,omitempty"`
 }
 
 type Store struct {
-	mu   sync.RWMutex
-	path string
-	subs map[string]Subscriber // key: Slack user ID
+	mu    sync.RWMutex
+	path  string
+	users map[string]User // key: Slack user ID
 }
 
 func NewStore(dataDir string) (*Store, error) {
@@ -26,8 +29,8 @@ func NewStore(dataDir string) (*Store, error) {
 	}
 
 	s := &Store{
-		path: filepath.Join(dataDir, "subscribers.json"),
-		subs: make(map[string]Subscriber),
+		path:  filepath.Join(dataDir, "subscribers.json"),
+		users: make(map[string]User),
 	}
 
 	if err := s.load(); err != nil {
@@ -46,7 +49,7 @@ func (s *Store) load() error {
 		return fmt.Errorf("reading subscribers: %w", err)
 	}
 
-	if err := json.Unmarshal(data, &s.subs); err != nil {
+	if err := json.Unmarshal(data, &s.users); err != nil {
 		return fmt.Errorf("parsing subscribers: %w", err)
 	}
 
@@ -54,7 +57,7 @@ func (s *Store) load() error {
 }
 
 func (s *Store) save() error {
-	data, err := json.MarshalIndent(s.subs, "", "  ")
+	data, err := json.MarshalIndent(s.users, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshaling subscribers: %w", err)
 	}
@@ -71,41 +74,97 @@ func (s *Store) save() error {
 	return nil
 }
 
-func (s *Store) Add(slackUserID, githubUsername string) error {
+func (s *Store) SetGitHub(slackUserID, githubUsername string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.subs[slackUserID] = Subscriber{
-		GitHubUsername: githubUsername,
-		SubscribedAt:  time.Now(),
-	}
+	u := s.users[slackUserID]
+	u.GitHubUsername = githubUsername
+	s.users[slackUserID] = u
 
 	return s.save()
 }
 
-func (s *Store) Remove(slackUserID string) error {
+func (s *Store) Subscribe(slackUserID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	delete(s.subs, slackUserID)
+	u := s.users[slackUserID]
+	u.Subscribed = true
+	now := time.Now()
+	u.SubscribedAt = &now
+	s.users[slackUserID] = u
+
 	return s.save()
 }
 
-func (s *Store) Get(slackUserID string) (Subscriber, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+func (s *Store) Unsubscribe(slackUserID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	sub, ok := s.subs[slackUserID]
-	return sub, ok
+	u := s.users[slackUserID]
+	u.Subscribed = false
+	u.SubscribedAt = nil
+	s.users[slackUserID] = u
+
+	return s.save()
 }
 
-func (s *Store) ListAll() map[string]Subscriber {
+func (s *Store) PSRSubscribe(slackUserID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	u := s.users[slackUserID]
+	u.PSRSubscribed = true
+	now := time.Now()
+	u.PSRSubscribedAt = &now
+	s.users[slackUserID] = u
+
+	return s.save()
+}
+
+func (s *Store) PSRUnsubscribe(slackUserID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	u := s.users[slackUserID]
+	u.PSRSubscribed = false
+	u.PSRSubscribedAt = nil
+	s.users[slackUserID] = u
+
+	return s.save()
+}
+
+func (s *Store) Get(slackUserID string) (User, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	copy := make(map[string]Subscriber, len(s.subs))
-	for k, v := range s.subs {
-		copy[k] = v
+	u, ok := s.users[slackUserID]
+	return u, ok
+}
+
+func (s *Store) ListSubscribed() map[string]User {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make(map[string]User)
+	for k, v := range s.users {
+		if v.Subscribed {
+			result[k] = v
+		}
 	}
-	return copy
+	return result
+}
+
+func (s *Store) ListPSRSubscribed() map[string]User {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make(map[string]User)
+	for k, v := range s.users {
+		if v.PSRSubscribed {
+			result[k] = v
+		}
+	}
+	return result
 }
