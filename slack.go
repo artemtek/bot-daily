@@ -45,8 +45,8 @@ func (b *Bot) handleEvents(ctx context.Context) {
 			switch cmd.Command {
 			case "/daily":
 				b.handleDaily(ctx, evt, cmd)
-			case "/psr":
-				b.handlePSR(ctx, evt, cmd)
+			case "/monthly":
+				b.handleMonthly(ctx, evt, cmd)
 			case "/subscribe":
 				b.handleSubscribe(ctx, evt, cmd)
 			}
@@ -98,8 +98,8 @@ func (b *Bot) handleDaily(ctx context.Context, evt socketmode.Event, cmd slack.S
 	go b.runPipelineFor(ctx, cmd.UserID, days, false)
 }
 
-func (b *Bot) handlePSR(ctx context.Context, evt socketmode.Event, cmd slack.SlashCommand) {
-	slog.Info("psr command", "user", cmd.UserID)
+func (b *Bot) handleMonthly(ctx context.Context, evt socketmode.Event, cmd slack.SlashCommand) {
+	slog.Info("monthly command", "user", cmd.UserID)
 
 	user, known := b.store.Get(cmd.UserID)
 	if !known || user.GitHubUsername == "" {
@@ -139,7 +139,7 @@ func (b *Bot) handleSubscribe(ctx context.Context, evt socketmode.Event, cmd sla
 		}
 		b.ack(evt, "Subscribed to daily updates!")
 
-	case args == "psr":
+	case args == "monthly":
 		if err := b.store.PSRSubscribe(cmd.UserID); err != nil {
 			b.ack(evt, "Failed to subscribe. Try again.")
 			return
@@ -153,7 +153,7 @@ func (b *Bot) handleSubscribe(ctx context.Context, evt socketmode.Event, cmd sla
 		}
 		b.ack(evt, "Unsubscribed from daily updates.")
 
-	case args == "stop psr":
+	case args == "stop monthly":
 		if err := b.store.PSRUnsubscribe(cmd.UserID); err != nil {
 			b.ack(evt, "Failed to unsubscribe. Try again.")
 			return
@@ -166,9 +166,9 @@ func (b *Bot) handleSubscribe(ctx context.Context, evt socketmode.Event, cmd sla
 	default:
 		b.ack(evt, strings.Join([]string{
 			"`/subscribe daily` — get daily scheduled updates",
-			"`/subscribe psr` — get monthly PSR reports",
+			"`/subscribe monthly` — get monthly PSR reports",
 			"`/subscribe stop daily` — stop daily updates",
-			"`/subscribe stop psr` — stop monthly PSR",
+			"`/subscribe stop monthly` — stop monthly PSR",
 			"`/subscribe github <username>` — change your GitHub username",
 			"`/subscribe status` — check your settings",
 		}, "\n"))
@@ -200,11 +200,11 @@ func (b *Bot) handleHelp(evt socketmode.Event) {
 		"`/daily` — summary for today",
 		"`/daily <N>` — summary for the last N days (max 30)",
 		"`/daily <github-username>` — set your GitHub username",
-		"`/psr` — generate monthly Project Status Report",
+		"`/monthly` — generate monthly Project Status Report",
 		"`/subscribe daily` — get daily updates automatically",
-		"`/subscribe psr` — get monthly PSR automatically",
+		"`/subscribe monthly` — get monthly PSR automatically",
 		"`/subscribe stop daily` — stop daily updates",
-		"`/subscribe stop psr` — stop monthly PSR",
+		"`/subscribe stop monthly` — stop monthly PSR",
 		"`/subscribe status` — check your settings",
 		"`/daily help` — show this message",
 	}, "\n"))
